@@ -1,0 +1,1154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Radar — Internet Radio</title>
+<meta name="theme-color" content="#1e2228">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Radar">
+<meta name="description" content="Radar — a fast, private internet radio player with now-playing metadata.">
+<style>
+  :root {
+    --accent: #8a70ff;
+    --accent-soft: rgba(138, 112, 255, 0.16);
+    --bg: #1e2228;
+    --surface: #262b33;
+    --surface-hover: #2d333d;
+    --border: #383e49;
+    --text: #eef1f5;
+    --muted: #9aa4b2;
+    --danger: #ff7a7a;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px 10px;
+    padding-top: max(14px, env(safe-area-inset-top));
+  }
+  header h1 { font-size: 22px; font-weight: 700; }
+  header .actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 10px;
+    background: none;
+    color: var(--text);
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #16181d;
+    padding: 9px 16px;
+    font-weight: 600;
+  }
+  .btn-primary:hover { filter: brightness(1.12); }
+  .btn-ghost {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 9px 14px;
+    font-weight: 500;
+  }
+  .btn-ghost:hover { background: var(--surface-hover); }
+
+  /* ---------- columns area ---------- */
+  #board {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    gap: 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px 24px 14px;
+    scroll-behavior: smooth;
+  }
+  /* Regular columns are wider now; the column holding the currently
+     selected/playing station widens further so each row keeps its
+     two lines (name + now-playing) without truncation. */
+  .column {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 430px;
+    max-width: 500px;
+    min-height: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    transition: flex-basis 0.25s ease, max-width 0.25s ease;
+  }
+  .column.playing {
+    flex-basis: 580px;
+    max-width: 660px;
+  }
+  .col-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .col-head .col-title {
+    flex: 1;
+    min-width: 0;
+    font-weight: 700;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: default;
+  }
+  .col-head button {
+    font-size: 12px;
+    padding: 4px 7px;
+    border-radius: 7px;
+    color: var(--muted);
+  }
+  .col-head button:hover { background: var(--surface-hover); color: var(--text); }
+  .col-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+    min-height: 0;
+  }
+  .col-foot { padding: 8px 14px 12px; border-top: 1px solid var(--border); }
+  .col-foot button { font-size: 13px; color: var(--accent); font-weight: 600; padding: 2px 0; }
+  .col-foot button:hover { text-decoration: underline; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .row:hover { background: var(--surface-hover); }
+  .row.active { background: var(--accent-soft); }
+  .row img {
+    width: 42px; height: 42px;
+    border-radius: 8px;
+    object-fit: cover;
+    background: #3a404b;
+    flex-shrink: 0;
+  }
+  .row .info { flex: 1; min-width: 0; }
+  .row .name { font-weight: 600; font-size: 14px; }
+  .row .np {
+    font-size: 12px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .row .np.live { color: var(--accent); font-weight: 500; }
+  .row .rowbtns { display: flex; gap: 1px; opacity: 0; }
+  .row:hover .rowbtns, .row.active .rowbtns, .row.dragging .rowbtns { opacity: 1; }
+  .row .rowbtns button { padding: 4px 6px; font-size: 12px; border-radius: 7px; color: var(--muted); }
+  .row .rowbtns button:hover { background: var(--bg); color: var(--text); }
+  .row.dragging { opacity: 0.45; }
+  .row.drop-target { box-shadow: 0 -2px 0 0 var(--accent); }
+  .empty { color: var(--muted); padding: 18px 10px; font-size: 13px; }
+  .recent-clear {
+    margin: 6px 0 2px;
+    font-size: 12px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    background: transparent;
+    padding: 5px 12px;
+    border-radius: 8px;
+  }
+  .recent-clear:hover { background: var(--surface-hover); color: var(--text); }
+  .day-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 10px 4px 2px;
+  }
+
+  /* reopen strip for hidden recents */
+  .reopen {
+    flex: 0 0 40px;
+    writing-mode: vertical-rl;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+    color: var(--muted);
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .reopen:hover { color: var(--text); background: var(--surface-hover); }
+
+  /* add-column tile */
+  .add-col {
+    flex: 0 0 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: 1px dashed var(--border);
+    border-radius: 14px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .add-col:hover { color: var(--text); background: var(--surface); }
+  .add-col .plus { font-size: 26px; }
+
+  /* Player bar */
+  #playerbar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 24px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    z-index: 10;
+  }
+  #pb-station { display: flex; align-items: center; gap: 12px; width: 280px; min-width: 0; }
+  #pb-station img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #3a404b; }
+  #pb-meta { min-width: 0; }
+  #pb-name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #pb-np { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  #pb-center { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  #pb-controls { display: flex; align-items: center; gap: 14px; }
+  #pb-controls button { font-size: 20px; padding: 6px; border-radius: 50%; }
+  #pb-controls button:hover { background: var(--surface-hover); }
+  #btn-stop { font-size: 24px; }
+  #pb-live {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    color: var(--muted); border: 1px solid var(--border);
+    padding: 2px 8px; border-radius: 999px;
+  }
+  #pb-live.on { color: #16181d; background: var(--accent); border-color: var(--accent); }
+  #pb-right { display: flex; align-items: center; gap: 14px; width: 280px; justify-content: flex-end; }
+  #volume { accent-color: var(--accent); width: 110px; background: transparent; }
+  #btn-fav.on { color: var(--accent); }
+
+  /* Modal */
+  #modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(10, 12, 16, 0.6);
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 8vh;
+    z-index: 20;
+  }
+  #modal-backdrop.open { display: flex; }
+  #modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: min(620px, 92vw);
+    max-height: 74vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+  }
+  #modal .search-head { padding: 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+  #search-input, #url-input {
+    font: inherit;
+    padding: 11px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    outline: none;
+    background: var(--bg);
+    color: var(--text);
+  }
+  #search-input:focus, #url-input:focus { border-color: var(--accent); }
+  #search-input::placeholder, #url-input::placeholder { color: var(--muted); }
+  #url-row { display: flex; gap: 8px; }
+  #url-input { flex: 1; }
+  #modal .results { overflow-y: auto; }
+  .res-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; cursor: pointer;
+  }
+  .res-row:hover { background: var(--surface-hover); }
+  .res-row img { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; background: #3a404b; }
+  .res-row .info { flex: 1; min-width: 0; }
+  .res-row .name { font-weight: 600; font-size: 14px; }
+  .res-row .sub { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .res-row .add { color: var(--accent); font-weight: 700; font-size: 18px; padding: 6px 10px; }
+
+  /* Toast */
+  #toast {
+    position: fixed; bottom: 96px; left: 50%;
+    transform: translateX(-50%);
+    background: #0d0f13; color: #fff;
+    border: 1px solid var(--border);
+    padding: 10px 18px; border-radius: 10px;
+    font-size: 13px; opacity: 0; pointer-events: none;
+    transition: opacity 0.25s;
+    z-index: 30;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Radar</h1>
+  <div class="actions">
+    <button class="btn-ghost" id="btn-install" style="display:none" title="Install as an app">⤓ Install app</button>
+    <button class="btn-ghost" id="btn-export" title="Save your stations to a JSON backup file">⬇ Export</button>
+    <button class="btn-ghost" id="btn-import" title="Restore stations from a Radar export file">⬆ Import</button>
+    <input type="file" id="import-file" accept="application/json,.json" style="display:none">
+    <button class="btn-ghost" id="btn-url">Add by URL</button>
+    <button class="btn-primary" id="btn-search">＋ Find stations</button>
+    <button class="btn-ghost" id="btn-sleep" title="Sleep timer">⏱ Sleep</button>
+  </div>
+</header>
+
+<div id="board"></div>
+
+<div id="playerbar">
+  <div id="pb-station">
+    <img id="pb-logo" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="">
+    <div id="pb-meta">
+      <div id="pb-name">Nothing playing</div>
+      <div id="pb-np">Pick a station to start listening</div>
+    </div>
+  </div>
+  <div id="pb-center">
+    <div id="pb-controls">
+      <button id="btn-prev" title="Previous favorite">⏮</button>
+      <button id="btn-stop" title="Play / stop (space)">▶</button>
+      <button id="btn-next" title="Next favorite">⏭</button>
+    </div>
+    <span id="pb-live">LIVE</span>
+  </div>
+  <div id="pb-right">
+    <input type="range" id="volume" min="0" max="100" value="100" title="Volume">
+    <button id="btn-fav" title="Favorite">♡</button>
+  </div>
+</div>
+
+<div id="modal-backdrop">
+  <div id="modal">
+    <div class="search-head">
+      <input id="search-input" type="search" placeholder="Search thousands of stations by name…" autofocus>
+      <div id="url-row" style="display:none">
+        <input id="url-input" type="url" placeholder="Paste a stream URL (http… .mp3 / .aac / .m3u)">
+        <button class="btn-primary" id="btn-add-url">Add</button>
+      </div>
+    </div>
+    <div class="results" id="search-results">
+      <div class="empty">Type to search the radio-browser database.</div>
+    </div>
+  </div>
+</div>
+
+<audio id="audio" preload="none"></audio>
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* ---------- helpers & state (declared first, everything depends on these) ---------- */
+const $ = (id) => document.getElementById(id);
+
+let favorites = [];    // {name, url, logo, tagline, group}
+let recents  = [];     // {name, url, logo, tagline, ts}
+let groupsOrder = [];  // ["Classical", "Rock", …]
+let recentsOpen = true;
+let current  = null;
+let playing  = false;
+let icyAbort = null;
+
+const DEFAULT_GROUP = "Classical";
+
+/* This copy ships as a shareable blank: no stations are baked in.
+   Your stations live in the browser's local storage — move them
+   between machines or browsers with Export / Import. To ship a copy
+   pre-seeded for someone, add names here. */
+const SEED_NAMES = [];
+
+const store = {
+  load() {
+    try {
+      favorites    = JSON.parse(localStorage.getItem("radar.favs") || "[]");
+      recents      = JSON.parse(localStorage.getItem("radar.recents") || "[]");
+      groupsOrder  = JSON.parse(localStorage.getItem("radar.groups") || "[]");
+      recentsOpen  = localStorage.getItem("radar.recentsOpen") !== "0";
+    } catch { favorites = []; recents = []; groupsOrder = []; recentsOpen = true; }
+
+    favorites.forEach(f => { if (!f.group) f.group = DEFAULT_GROUP; });
+    favorites.forEach(f => { if (!groupsOrder.includes(f.group)) groupsOrder.push(f.group); });
+    groupsOrder = groupsOrder.filter(g => favorites.some(f => f.group === g));
+  },
+  save() {
+    localStorage.setItem("radar.favs", JSON.stringify(favorites));
+    localStorage.setItem("radar.recents", JSON.stringify(recents.slice(0, 40)));
+    localStorage.setItem("radar.groups", JSON.stringify(groupsOrder));
+    localStorage.setItem("radar.recentsOpen", recentsOpen ? "1" : "0");
+  }
+};
+
+let toastTimer = null;
+function toast(msg) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+/* ================= PWA setup (self-contained, single file) =================
+   The web app manifest is generated here and injected as a data: URI, so the
+   whole PWA stays one HTML file. A service worker cannot live inside the
+   HTML file; if you later host this page and want offline caching, add a
+   10-line sw.js alongside it. Installing (Vivaldi/Chrome/Edge) gives Radar
+   its own standalone window — no browser tabs needed. */
+
+const RADAR_ICON = "data:image/svg+xml," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+     <rect width="512" height="512" rx="96" fill="#1e2228"/>
+     <circle cx="256" cy="256" r="150" fill="none" stroke="#8a70ff" stroke-width="26" opacity="0.45"/>
+     <circle cx="256" cy="256" r="90" fill="none" stroke="#8a70ff" stroke-width="26" opacity="0.7"/>
+     <circle cx="256" cy="256" r="28" fill="#8a70ff"/>
+     <line x1="256" y1="256" x2="342" y2="170" stroke="#8a70ff" stroke-width="20" stroke-linecap="round"/>
+     <circle cx="346" cy="166" r="24" fill="#eef1f5"/>
+   </svg>`
+);
+
+const manifestLink = document.createElement("link");
+manifestLink.rel = "manifest";
+manifestLink.href = "data:application/manifest+json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+  name: "Radar — Internet Radio",
+  short_name: "Radar",
+  description: "A fast, private internet radio player with now-playing metadata.",
+  start_url: ".",
+  scope: ".",
+  display: "standalone",
+  orientation: "any",
+  background_color: "#1e2228",
+  theme_color: "#1e2228",
+  icons: [
+    { src: RADAR_ICON, sizes: "512x512", type: "image/svg+xml", purpose: "any" },
+    { src: RADAR_ICON, sizes: "512x512", type: "image/svg+xml", purpose: "maskable" }
+  ]
+}));
+document.head.appendChild(manifestLink);
+
+const appleIcon = document.createElement("link");
+appleIcon.rel = "apple-touch-icon";
+appleIcon.href = RADAR_ICON;
+document.head.appendChild(appleIcon);
+
+let deferredInstall = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  $("btn-install").style.display = "";
+});
+$("btn-install").addEventListener("click", async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  const { outcome } = await deferredInstall.userChoice;
+  if (outcome === "accepted") { $("btn-install").style.display = "none"; toast("Radar installed"); }
+  deferredInstall = null;
+});
+window.addEventListener("appinstalled", () => {
+  $("btn-install").style.display = "none";
+  toast("Radar installed — find it in your apps / home screen");
+});
+
+/* ---------- seeding (only when SEED_NAMES is non-empty) ---------- */
+async function seedIfNeeded() {
+  if (localStorage.getItem("radar.seeded")) return;
+  localStorage.setItem("radar.seeded", "1");
+  if (!SEED_NAMES.length) return;
+  toast("Populating favorites…");
+  for (const name of SEED_NAMES) {
+    try {
+      const stations = await searchRadioBrowser(name, 3);
+      const pick = stations.find(s => s.name.toLowerCase().includes(name.toLowerCase()) && s.url_resolved)
+                || stations[0];
+      if (pick && !favorites.some(f => f.url === pick.url_resolved)) {
+        favorites.push({
+          name: pick.name,
+          url: pick.url_resolved,
+          logo: pick.favicon || "",
+          tagline: `${pick.country || ""} ${pick.tags ? "· " + pick.tags.split(",").slice(0,2).join(", ") : ""}`.trim(),
+          group: DEFAULT_GROUP
+        });
+      }
+    } catch { /* keep seeding the rest */ }
+    store.save();
+    renderBoard();
+  }
+}
+
+/* ---------- radio-browser API ---------- */
+const API_BASES = [
+  "https://de1.api.radio-browser.info",
+  "https://nl1.api.radio-browser.info",
+  "https://at1.api.radio-browser.info"
+];
+let apiBaseIdx = 0;
+
+async function searchRadioBrowser(term, limit = 30) {
+  for (let attempt = 0; attempt < API_BASES.length; attempt++) {
+    const base = API_BASES[(apiBaseIdx + attempt) % API_BASES.length];
+    try {
+      const url = `${base}/json/stations/search?name=${encodeURIComponent(term)}&limit=${limit}&hidebroken=true&order=votes&reverse=true`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.status);
+      apiBaseIdx = (apiBaseIdx + attempt) % API_BASES.length;
+      return await res.json();
+    } catch { /* try next mirror */ }
+  }
+  throw new Error("radio-browser unreachable");
+}
+
+/* ---------- export / import (backup & sync between devices) ---------- */
+function exportStations() {
+  const data = {
+    app: "radar",
+    version: 1,
+    exported: new Date().toISOString(),
+    groupsOrder: groupsOrder,
+    favorites: favorites.map(f => ({
+      name: f.name, url: f.url, logo: f.logo, tagline: f.tagline, group: f.group
+    }))
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "radar-stations-" + new Date().toISOString().slice(0, 10) + ".json";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast(`Exported ${favorites.length} stations`);
+}
+
+function importStations(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data || !Array.isArray(data.favorites)) throw new Error("bad format");
+      const incoming = data.favorites.filter(f => f && f.name && f.url);
+      if (!incoming.length) { toast("No stations found in that file"); return; }
+
+      let mode = "replace";
+      if (favorites.length) {
+        mode = confirm(
+          `The file contains ${incoming.length} stations.\n\n` +
+          "OK  = replace your current list\n" +
+          "Cancel = merge into your current list"
+        ) ? "replace" : "merge";
+      }
+      if (mode === "replace") {
+        favorites = incoming;
+      } else {
+        const seen = new Set(favorites.map(f => f.url));
+        incoming.forEach(f => { if (!seen.has(f.url)) favorites.push(f); });
+      }
+      favorites.forEach(f => { if (!f.group) f.group = DEFAULT_GROUP; });
+      groupsOrder = Array.isArray(data.groupsOrder) ? data.groupsOrder.slice() : [];
+      favorites.forEach(f => { if (!groupsOrder.includes(f.group)) groupsOrder.push(f.group); });
+      groupsOrder = groupsOrder.filter(g => favorites.some(f => f.group === g));
+      store.save();
+      renderBoard();
+      toast(`Imported ${incoming.length} stations (${mode})`);
+    } catch {
+      toast("Couldn't read that file — is it a Radar export?");
+    }
+  };
+  reader.readAsText(file);
+}
+
+$("btn-export").addEventListener("click", exportStations);
+$("btn-import").addEventListener("click", () => $("import-file").click());
+$("import-file").addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (file) importStations(file);
+});
+
+/* ---------- rendering ---------- */
+function esc(s) {
+  return (s || "").replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+}
+
+function rowHTML(st, npTextValue, isLive) {
+  return `
+      <img src="${esc(st.logo) || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E"}"
+           onerror="this.style.visibility='hidden'" alt="">
+      <div class="info">
+        <div class="name">${esc(st.name)}</div>
+        <div class="np${isLive ? " live" : ""}">${esc(npTextValue)}</div>
+      </div>`;
+}
+
+function wireStationRow(row, st) {
+  /* drag & drop reorder within a column, or move across columns */
+  row.draggable = true;
+  row.addEventListener("dragstart", (e) => {
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", JSON.stringify({ url: st.url, group: st.group }));
+    row.classList.add("dragging");
+  });
+  row.addEventListener("dragend", () => {
+    row.classList.remove("dragging");
+    document.querySelectorAll(".drop-target").forEach(el => el.classList.remove("drop-target"));
+  });
+  row.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    row.classList.add("drop-target");
+  });
+  row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+  row.addEventListener("drop", (e) => {
+    e.preventDefault();
+    row.classList.remove("drop-target");
+    try {
+      const data = JSON.parse(e.dataTransfer.getData("text/plain"));
+      const fromIdx = favorites.findIndex(f => f.url === data.url);
+      const toIdx   = favorites.findIndex(f => f.url === st.url);
+      if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
+      favorites[fromIdx].group = st.group;   // dropping into another column moves it there
+      const [moved] = favorites.splice(fromIdx, 1);
+      favorites.splice(toIdx, 0, moved);
+      store.save();
+      renderBoard();
+    } catch { /* ignore malformed drops */ }
+  });
+}
+
+/* ---------- board: one column per group + recents column ---------- */
+function renderBoard() {
+  const board = $("board");
+  board.innerHTML = "";
+
+  groupsOrder.forEach((group, gIdx) => {
+    const stations = favorites.filter(f => f.group === group);
+    const hasPlaying = current && stations.some(f => f.url === current.url);
+    const col = document.createElement("div");
+    col.className = "column" + (hasPlaying ? " playing" : "");
+
+    const head = document.createElement("div");
+    head.className = "col-head";
+    head.innerHTML = `
+      <span class="col-title" title="${esc(group)} — double-click to rename">${esc(group)}</span>
+      <button data-gact="left"  title="Move column left">◀</button>
+      <button data-gact="right" title="Move column right">▶</button>
+      <button data-gact="rename" title="Rename group">✎</button>
+      <button data-gact="del" title="Delete group (stations move to first column)">🗑</button>`;
+    head.querySelector(".col-title").addEventListener("dblclick", () => renameGroup(group));
+
+    head.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-gact]");
+      if (!b) return;
+      const act = b.dataset.gact;
+      if (act === "left" && gIdx > 0) {
+        [groupsOrder[gIdx - 1], groupsOrder[gIdx]] = [groupsOrder[gIdx], groupsOrder[gIdx - 1]];
+      } else if (act === "right" && gIdx < groupsOrder.length - 1) {
+        [groupsOrder[gIdx + 1], groupsOrder[gIdx]] = [groupsOrder[gIdx], groupsOrder[gIdx + 1]];
+      } else if (act === "rename") { renameGroup(group); return; }
+      else if (act === "del") { deleteGroup(group); return; }
+      else { return; }
+      store.save();
+      renderBoard();
+    });
+
+    const body = document.createElement("div");
+    body.className = "col-body";
+    if (!stations.length) {
+      body.innerHTML = '<div class="empty">No stations here yet.</div>';
+    }
+    stations.forEach(st => {
+      const isActive = current && current.url === st.url;
+      const row = document.createElement("div");
+      row.className = "row" + (isActive ? " active" : "");
+      row.innerHTML = rowHTML(st, nowPlayingLabel(st), isActive && playing && npText) + `
+        <div class="rowbtns">
+          <button data-act="up" title="Move up in this column">▲</button>
+          <button data-act="down" title="Move down in this column">▼</button>
+          <button data-act="move" title="Move to another group">⇄</button>
+          <button data-act="del" title="Remove station">✕</button>
+        </div>`;
+      row.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-act]");
+        if (btn) {
+          const act = btn.dataset.act;
+          const idx = favorites.findIndex(f => f.url === st.url);
+          const colList = favorites.filter(f => f.group === st.group);
+          const posInCol = colList.indexOf(st);
+          if (act === "del") {
+            favorites.splice(idx, 1);
+            if (current && current.url === st.url) stop();
+          } else if (act === "move") {
+            const others = groupsOrder.filter(g => g !== st.group);
+            if (!others.length) { toast("Create another group first"); return; }
+            const dest = prompt(`Move "${st.name}" to which group?`, others.join(" / "));
+            if (!dest || !groupsOrder.includes(dest.trim())) { toast("Unknown group"); return; }
+            st.group = dest.trim();
+          } else if (act === "up" && posInCol > 0) {
+            const prev = colList[posInCol - 1];
+            const pi = favorites.indexOf(st), pj = favorites.indexOf(prev);
+            [favorites[pi], favorites[pj]] = [favorites[pj], favorites[pi]];
+          } else if (act === "down" && posInCol < colList.length - 1) {
+            const next = colList[posInCol + 1];
+            const pi = favorites.indexOf(st), nj = favorites.indexOf(next);
+            [favorites[pi], favorites[nj]] = [favorites[nj], favorites[pi]];
+          } else { return; }
+          store.save();
+          renderBoard();
+          return;
+        }
+        playStation(st);
+      });
+      wireStationRow(row, st);
+      body.appendChild(row);
+    });
+
+    const foot = document.createElement("div");
+    foot.className = "col-foot";
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "＋ Add station to this column";
+    addBtn.addEventListener("click", () => openModal(false, group));
+    foot.appendChild(addBtn);
+
+    col.appendChild(head);
+    col.appendChild(body);
+    col.appendChild(foot);
+    board.appendChild(col);
+  });
+
+  /* recents column (toggleable) */
+  if (recentsOpen) {
+    const col = document.createElement("div");
+    col.className = "column";
+    const head = document.createElement("div");
+    head.className = "col-head";
+    head.innerHTML = `<span class="col-title">Recent</span>
+      <button data-ract="close" title="Hide recents column">✕</button>`;
+    head.addEventListener("click", (e) => {
+      if (e.target.closest('[data-ract="close"]')) {
+        recentsOpen = false;
+        store.save();
+        renderBoard();
+      }
+    });
+    const body = document.createElement("div");
+    body.className = "col-body";
+
+    if (!recents.length) {
+      body.innerHTML = '<div class="empty">Stations you play will appear here, grouped by day.</div>';
+    } else {
+      const groups = {};
+      recents.slice(0, 40).forEach(st => {
+        const label = st.ts ? dayKey(st.ts) : "Older";
+        (groups[label] = groups[label] || []).push(st);
+      });
+      ["Today", "Yesterday", "Earlier this week", "Older"].forEach(label => {
+        if (!groups[label]) return;
+        const dl = document.createElement("div");
+        dl.className = "day-label";
+        dl.textContent = label;
+        body.appendChild(dl);
+        groups[label].forEach(st => {
+          const row = document.createElement("div");
+          row.className = "row" + (current && current.url === st.url ? " active" : "");
+          row.innerHTML = rowHTML(st, st.tagline || "", false);
+          row.addEventListener("click", () => playStation(st));
+          body.appendChild(row);
+        });
+      });
+      const clear = document.createElement("button");
+      clear.className = "recent-clear";
+      clear.textContent = "Clear recents";
+      clear.addEventListener("click", () => {
+        recents = [];
+        store.save();
+        renderBoard();
+        toast("Recents cleared");
+      });
+      body.appendChild(clear);
+    }
+
+    col.appendChild(head);
+    col.appendChild(body);
+    board.appendChild(col);
+  } else {
+    const reopen = document.createElement("button");
+    reopen.className = "reopen";
+    reopen.textContent = "⟲ Recents";
+    reopen.title = "Show recents column";
+    reopen.addEventListener("click", () => {
+      recentsOpen = true;
+      store.save();
+      renderBoard();
+    });
+    board.appendChild(reopen);
+  }
+
+  /* add-group tile */
+  const addCol = document.createElement("button");
+  addCol.className = "add-col";
+  addCol.innerHTML = `<span class="plus">＋</span><span>Add column<br>(new group)</span>`;
+  addCol.addEventListener("click", addGroup);
+  board.appendChild(addCol);
+}
+
+function dayKey(ts) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const day = new Date(ts); day.setHours(0,0,0,0);
+  const diffDays = Math.round((today - day) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays <= 7)  return "Earlier this week";
+  return "Older";
+}
+
+function addGroup() {
+  const name = prompt("Name for the new column/group:", "New group");
+  if (!name || !name.trim()) return;
+  const g = name.trim();
+  if (groupsOrder.includes(g)) { toast("A group with that name already exists"); return; }
+  groupsOrder.push(g);
+  store.save();
+  renderBoard();
+  toast(`Column "${g}" added`);
+}
+
+function renameGroup(group) {
+  const name = prompt("Rename group:", group);
+  if (!name || !name.trim() || name.trim() === group) return;
+  const g = name.trim();
+  if (groupsOrder.includes(g)) { toast("A group with that name already exists"); return; }
+  favorites.forEach(f => { if (f.group === group) f.group = g; });
+  groupsOrder[groupsOrder.indexOf(group)] = g;
+  store.save();
+  renderBoard();
+}
+
+function deleteGroup(group) {
+  const count = favorites.filter(f => f.group === group).length;
+  const msg = count
+    ? `Delete column "${group}"? Its ${count} station(s) will move to the first column.`
+    : `Delete empty column "${group}"?`;
+  if (!confirm(msg)) return;
+  if (count) {
+    const fallback = groupsOrder.find(g => g !== group);
+    favorites.forEach(f => { if (f.group === group) f.group = fallback; });
+  }
+  groupsOrder = groupsOrder.filter(g => g !== group);
+  store.save();
+  renderBoard();
+}
+
+function nowPlayingLabel(st) {
+  if (current && current.url === st.url) {
+    return npText || current.tagline || (playing ? "Playing live" : "");
+  }
+  return st.tagline || "";
+}
+
+/* ---------- playback ---------- */
+const audio = $("audio");
+let npText = "";
+
+function playStation(st) {
+  stopICY();
+  current = st;
+  npText = "";
+  audio.src = st.url;
+  audio.volume = $("volume").value / 100;
+  audio.play().catch(err => toast("Couldn't play this stream: " + err.message));
+  playing = true;
+
+  recents = [{ ...st, ts: Date.now() }, ...recents.filter(r => r.url !== st.url)].slice(0, 40);
+  store.save();
+
+  updateBar();
+  renderBoard();
+  startICY(st);
+}
+
+function stop() {
+  stopICY();
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  playing = false;
+  current = null;
+  npText = "";
+  updateBar();
+  renderBoard();
+}
+
+function stopICY() { if (icyAbort) { icyAbort.abort(); icyAbort = null; } }
+
+function updateBar() {
+  $("pb-name").textContent = current ? current.name : "Nothing playing";
+  $("pb-np").textContent = current
+    ? (npText || (playing ? (current.tagline || "Playing live") : "Connecting…"))
+    : "Pick a station to start listening";
+  $("pb-logo").src = current && current.logo ? current.logo :
+    "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  $("btn-stop").textContent = playing ? "⏸" : "▶";
+  $("pb-live").className = playing ? "on" : "";
+  const isFav = current && favorites.some(f => f.url === current.url);
+  $("btn-fav").textContent = isFav ? "♥" : "♡";
+  $("btn-fav").classList.toggle("on", !!isFav);
+
+  if (current && "mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: npText || current.name,
+      artist: current.name,
+      artwork: current.logo ? [{ src: current.logo, sizes: "512x512" }] : []
+    });
+  }
+}
+
+audio.addEventListener("waiting", () => {
+  if (current) $("pb-np").textContent = "Connecting…";
+});
+audio.addEventListener("playing", () => updateBar());
+audio.addEventListener("error", () => {
+  if (current) toast("Stream error — the station may be offline or the format unsupported.");
+});
+
+/* ---------- now-playing via ICY metadata ----------
+   Browsers block ICY headers on most cross-origin streams (CORS),
+   so this works only where the stream server allows it.
+   Whatever the station broadcasts — song title, artist, program
+   name — is shown verbatim as it arrives. */
+async function startICY(st) {
+  stopICY();
+  const ctrl = new AbortController();
+  icyAbort = ctrl;
+  try {
+    const res = await fetch(st.url, {
+      signal: ctrl.signal,
+      headers: { "Icy-MetaData": "1" }
+    });
+    const metaInt = parseInt(res.headers.get("icy-metaint"), 10);
+    if (!metaInt || !res.body) { ctrl.abort(); return; }
+
+    const reader = res.body.getReader();
+    let buf = new Uint8Array(0), untilMeta = metaInt, inMeta = false, metaLen = 0;
+    const push = (chunk) => {
+      const merged = new Uint8Array(buf.length + chunk.length);
+      merged.set(buf); merged.set(chunk, buf.length);
+      buf = merged;
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (ctrl.signal.aborted) { reader.cancel(); break; }
+      let offset = 0;
+      while (offset < value.length) {
+        if (!inMeta) {
+          const take = Math.min(untilMeta, value.length - offset);
+          push(value.subarray(offset, offset + take));
+          offset += take; untilMeta -= take;
+          if (untilMeta === 0) { inMeta = true; metaLen = -1; buf = new Uint8Array(0); }
+        } else {
+          if (metaLen === -1) {
+            metaLen = value[offset] * 16;
+            offset += 1;
+            if (metaLen === 0) { inMeta = false; untilMeta = metaInt; }
+          } else {
+            const need = metaLen - buf.length;
+            const take = Math.min(need, value.length - offset);
+            push(value.subarray(offset, offset + take));
+            offset += take;
+            if (buf.length === metaLen) {
+              const text = new TextDecoder().decode(buf).replace(/\0+$/g, "");
+              const m = text.match(/StreamTitle='([^']*)'/);
+              if (m && m[1] && m[1] !== npText) {
+                npText = m[1];
+                updateBar();
+                renderBoard();
+              }
+              inMeta = false; untilMeta = metaInt; buf = new Uint8Array(0);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name !== "AbortError" && current && current.url === st.url && !npText) {
+      // silent — metadata is best-effort in browser mode
+    }
+  }
+}
+
+/* ---------- search modal ---------- */
+const backdrop = $("modal-backdrop");
+let targetGroup = null;   // which column "Find stations" is adding to
+
+function openModal(withUrlRow, group) {
+  targetGroup = group || groupsOrder[0] || DEFAULT_GROUP;
+  backdrop.classList.add("open");
+  $("url-row").style.display = withUrlRow ? "flex" : "none";
+  $("search-input").value = "";
+  $("search-results").innerHTML = withUrlRow
+    ? '<div class="empty">Paste a stream URL to add it.</div>'
+    : `<div class="empty">Adding to column “${esc(targetGroup)}”. Type to search the radio-browser database.</div>`;
+  (withUrlRow ? $("url-input") : $("search-input")).focus();
+}
+function closeModal() { backdrop.classList.remove("open"); }
+
+$("btn-search").addEventListener("click", () => openModal(false));
+$("btn-url").addEventListener("click", () => openModal(true, groupsOrder[0]));
+backdrop.addEventListener("click", (e) => { if (e.target === backdrop) closeModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+
+let searchTimer = null;
+$("search-input").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  const term = e.target.value.trim();
+  if (term.length < 2) return;
+  searchTimer = setTimeout(async () => {
+    $("search-results").innerHTML = '<div class="empty">Searching…</div>';
+    try {
+      const results = await searchRadioBrowser(term, 30);
+      renderResults(results);
+    } catch {
+      $("search-results").innerHTML =
+        '<div class="empty">Couldn\u2019t reach the station database. Check your connection.</div>';
+    }
+  }, 350);
+});
+
+function renderResults(list) {
+  const el = $("search-results");
+  el.innerHTML = list.length ? "" : '<div class="empty">No stations found.</div>';
+  list.forEach(st => {
+    const row = document.createElement("div");
+    row.className = "res-row";
+    row.innerHTML = `
+      <img src="${esc(st.favicon)}" onerror="this.style.visibility='hidden'" alt="">
+      <div class="info">
+        <div class="name">${esc(st.name)}</div>
+        <div class="sub">${esc([st.country, st.codec, st.bitrate ? st.bitrate + " kbps" : ""].filter(Boolean).join(" · "))}</div>
+      </div>
+      <span class="add">＋</span>`;
+    row.addEventListener("click", () => {
+      const station = {
+        name: st.name,
+        url: st.url_resolved || st.url,
+        logo: st.favicon || "",
+        tagline: [st.country, (st.tags || "").split(",")[0]].filter(Boolean).join(" · "),
+        group: targetGroup || DEFAULT_GROUP
+      };
+      if (!favorites.some(f => f.url === station.url)) {
+        favorites.unshift(station);
+        if (!groupsOrder.includes(station.group)) groupsOrder.push(station.group);
+        store.save();
+        renderBoard();
+      }
+      closeModal();
+      playStation(station);
+    });
+    el.appendChild(row);
+  });
+}
+
+$("btn-add-url").addEventListener("click", () => {
+  const url = $("url-input").value.trim();
+  if (!/^https?:\/\//.test(url)) { toast("Enter a full http(s) stream URL."); return; }
+  const station = {
+    name: url.replace(/^https?:\/\//, "").split("/")[0],
+    url,
+    logo: "",
+    tagline: "Added by URL",
+    group: targetGroup || DEFAULT_GROUP
+  };
+  favorites.unshift(station);
+  if (!groupsOrder.includes(station.group)) groupsOrder.push(station.group);
+  store.save();
+  renderBoard();
+  closeModal();
+  playStation(station);
+});
+
+/* ---------- player bar controls ---------- */
+$("btn-stop").addEventListener("click", () => playing ? stop() : (current ? playStation(current) : null));
+$("btn-prev").addEventListener("click", () => skip(-1));
+$("btn-next").addEventListener("click", () => skip(1));
+$("btn-fav").addEventListener("click", () => {
+  if (!current) return;
+  const idx = favorites.findIndex(f => f.url === current.url);
+  if (idx >= 0) { favorites.splice(idx, 1); toast("Removed from favorites"); }
+  else {
+    const copy = { ...current, ts: undefined, group: DEFAULT_GROUP };
+    favorites.unshift(copy);
+    if (!groupsOrder.includes(DEFAULT_GROUP)) groupsOrder.unshift(DEFAULT_GROUP);
+    toast(`Added to "${DEFAULT_GROUP}" column`);
+  }
+  store.save(); updateBar(); renderBoard();
+});
+$("volume").addEventListener("input", (e) => { audio.volume = e.target.value / 100; });
+
+function skip(dir) {
+  if (!favorites.length) return;
+  const idx = current ? favorites.findIndex(f => f.url === current.url) : -1;
+  const next = favorites[(idx + dir + favorites.length) % favorites.length];
+  playStation(next);
+}
+
+/* ---------- keyboard shortcuts ---------- */
+document.addEventListener("keydown", (e) => {
+  if ($("search-input") === document.activeElement || $("url-input") === document.activeElement) return;
+  if (e.code === "Space") { e.preventDefault(); $("btn-stop").click(); }
+  if (e.key === "ArrowRight") skip(1);
+  if (e.key === "ArrowLeft") skip(-1);
+});
+
+/* ---------- sleep timer ---------- */
+let sleepTimeout = null;
+$("btn-sleep").addEventListener("click", () => {
+  if (sleepTimeout) {
+    clearTimeout(sleepTimeout); sleepTimeout = null;
+    toast("Sleep timer cancelled");
+    return;
+  }
+  const mins = parseFloat(prompt("Stop playback after how many minutes?", "30"));
+  if (!mins || mins <= 0) return;
+  sleepTimeout = setTimeout(() => { stop(); toast("Sleep timer: playback stopped"); }, mins * 60000);
+  toast(`Playback stops in ${mins} min`);
+});
+
+/* ---------- init ---------- */
+store.load();
+renderBoard();
+seedIfNeeded();
+</script>
+</body>
+</html>
