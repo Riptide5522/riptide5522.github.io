@@ -76,9 +76,6 @@
     padding: 6px 24px 14px;
     scroll-behavior: smooth;
   }
-  /* Regular columns are wider now; the column holding the currently
-     selected/playing station widens further so each row keeps its
-     two lines (name + now-playing) without truncation. */
   .column {
     display: flex;
     flex-direction: column;
@@ -183,7 +180,6 @@
     margin: 10px 4px 2px;
   }
 
-  /* reopen strip for hidden recents */
   .reopen {
     flex: 0 0 40px;
     writing-mode: vertical-rl;
@@ -201,7 +197,6 @@
   }
   .reopen:hover { color: var(--text); background: var(--surface-hover); }
 
-  /* add-column tile */
   .add-col {
     flex: 0 0 200px;
     display: flex;
@@ -382,13 +377,10 @@ let recentsOpen = true;
 let current  = null;
 let playing  = false;
 let icyAbort = null;
+let playToken = 0;     // guards against races between rapid station clicks
 
 const DEFAULT_GROUP = "Classical";
 
-/* This copy ships as a shareable blank: no stations are baked in.
-   Your stations live in the browser's local storage — move them
-   between machines or browsers with Export / Import. To ship a copy
-   pre-seeded for someone, add names here. */
 const SEED_NAMES = [];
 
 const store = {
@@ -422,11 +414,10 @@ function toast(msg) {
 }
 
 /* ================= PWA setup (self-contained, single file) =================
-   The web app manifest is generated here and injected as a data: URI, so the
-   whole PWA stays one HTML file. A service worker cannot live inside the
-   HTML file; if you later host this page and want offline caching, add a
-   10-line sw.js alongside it. Installing (Vivaldi/Chrome/Edge) gives Radar
-   its own standalone window — no browser tabs needed. */
+   Manifest is generated here and injected as a data: URI. Installing works
+   only from a secure context (https, e.g. GitHub Pages) — not from file://.
+   A service worker cannot live inside this single file; add a tiny sw.js
+   alongside it if you host and want offline caching. */
 
 const RADAR_ICON = "data:image/svg+xml," + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
@@ -529,7 +520,7 @@ async function searchRadioBrowser(term, limit = 30) {
   throw new Error("radio-browser unreachable");
 }
 
-/* ---------- export / import (backup & sync between devices) ---------- */
+/* ---------- export / import ---------- */
 function exportStations() {
   const data = {
     app: "radar",
@@ -613,7 +604,6 @@ function rowHTML(st, npTextValue, isLive) {
 }
 
 function wireStationRow(row, st) {
-  /* drag & drop reorder within a column, or move across columns */
   row.draggable = true;
   row.addEventListener("dragstart", (e) => {
     e.dataTransfer.effectAllowed = "move";
@@ -638,7 +628,7 @@ function wireStationRow(row, st) {
       const fromIdx = favorites.findIndex(f => f.url === data.url);
       const toIdx   = favorites.findIndex(f => f.url === st.url);
       if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return;
-      favorites[fromIdx].group = st.group;   // dropping into another column moves it there
+      favorites[fromIdx].group = st.group;
       const [moved] = favorites.splice(fromIdx, 1);
       favorites.splice(toIdx, 0, moved);
       store.save();
@@ -647,7 +637,7 @@ function wireStationRow(row, st) {
   });
 }
 
-/* ---------- board: one column per group + recents column ---------- */
+/* ---------- board ---------- */
 function renderBoard() {
   const board = $("board");
   board.innerHTML = "";
@@ -747,7 +737,6 @@ function renderBoard() {
     board.appendChild(col);
   });
 
-  /* recents column (toggleable) */
   if (recentsOpen) {
     const col = document.createElement("div");
     col.className = "column";
@@ -815,7 +804,6 @@ function renderBoard() {
     board.appendChild(reopen);
   }
 
-  /* add-group tile */
   const addCol = document.createElement("button");
   addCol.className = "add-col";
   addCol.innerHTML = `<span class="plus">＋</span><span>Add column<br>(new group)</span>`;
@@ -881,13 +869,76 @@ function nowPlayingLabel(st) {
 const audio = $("audio");
 let npText = "";
 
+function resetAudio() {
+  stopICY();
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+}
+
+/* Clean a station name for lookup: drop "(128k)", "- AAC" style suffixes
+   that pollute database searches. */
+function cleanLookupName(name) {
+  return name.replace(/\s*[\(\[].*?[\)\]]\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/* Update a station's URL everywhere it is stored (favorites + recents). */
+function updateStationUrl(st, newUrl) {
+  st.url = newUrl;
+  favorites.forEach(f => { if (f.name === st.name && f.group === st.group) f.url = newUrl; });
+  recents.forEach(r => { if (r.name === st.name) r.url = newUrl; });
+  store.save();
+}
+
+/* When a stream fails: the stored URL is usually stale (old redirects,
+   retired short-links, changed endpoints). Re-look up the station in the
+   radio-browser database by name, adopt its current URL, and retry once. */
+async function attemptRepair(st, myToken) {
+  toast(`Stream failed — looking up a fresh URL for ${st.name}…`);
+  try {
+    const results = await searchRadioBrowser(cleanLookupName(st.name), 10);
+    // Best match: same-ish name with a usable resolved URL.
+    const lower = st.name.toLowerCase();
+    const pick = results.find(s => s.url_resolved && s.name.toLowerCase().includes(lower.split(" ")[0]))
+              || results.find(s => s.url_resolved);
+    if (!pick || !pick.url_resolved || pick.url_resolved === st.url) {
+      if (myToken === playToken) {
+        toast(`Couldn't find a working stream for ${st.name}. Try "Find stations" to re-add it.`);
+      }
+      return;
+    }
+    updateStationUrl(st, pick.url_resolved);
+    if (myToken !== playToken) return;   // user clicked something else meanwhile
+    if (pick.favicon && !st.logo) st.logo = pick.favicon;
+    renderBoard();
+    toast(`Updated ${st.name}'s stream URL — trying again…`);
+    startPlayback(st, myToken);
+  } catch {
+    if (myToken === playToken) {
+      toast(`Stream failed and repair lookup couldn't reach the station database.`);
+    }
+  }
+}
+
+function startPlayback(st, myToken) {
+  resetAudio();
+  audio.src = st.url;
+  audio.volume = $("volume").value / 100;
+  const p = audio.play();
+  if (p && p.catch) {
+    p.catch(err => {
+      // Superseded by another click, or a benign interruption — stay quiet.
+      if (myToken !== playToken || err.name === "AbortError") return;
+      attemptRepair(st, myToken);
+    });
+  }
+}
+
 function playStation(st) {
+  const myToken = ++playToken;
   stopICY();
   current = st;
   npText = "";
-  audio.src = st.url;
-  audio.volume = $("volume").value / 100;
-  audio.play().catch(err => toast("Couldn't play this stream: " + err.message));
   playing = true;
 
   recents = [{ ...st, ts: Date.now() }, ...recents.filter(r => r.url !== st.url)].slice(0, 40);
@@ -895,10 +946,11 @@ function playStation(st) {
 
   updateBar();
   renderBoard();
-  startICY(st);
+  startPlayback(st, myToken);
 }
 
 function stop() {
+  ++playToken;          // invalidate any in-flight play/repair attempts
   stopICY();
   audio.pause();
   audio.removeAttribute("src");
@@ -934,19 +986,22 @@ function updateBar() {
   }
 }
 
+/* Hard stream failures (wrong/offline URL) surface here too; route them
+   into the same repair flow, guarded against races and duplicates. */
+audio.addEventListener("error", () => {
+  if (!current || !playing) return;
+  const token = playToken;
+  if (audio.error && audio.error.code !== 0) {
+    attemptRepair(current, token);
+  }
+});
+
 audio.addEventListener("waiting", () => {
   if (current) $("pb-np").textContent = "Connecting…";
 });
 audio.addEventListener("playing", () => updateBar());
-audio.addEventListener("error", () => {
-  if (current) toast("Stream error — the station may be offline or the format unsupported.");
-});
 
-/* ---------- now-playing via ICY metadata ----------
-   Browsers block ICY headers on most cross-origin streams (CORS),
-   so this works only where the stream server allows it.
-   Whatever the station broadcasts — song title, artist, program
-   name — is shown verbatim as it arrives. */
+/* ---------- now-playing via ICY metadata ---------- */
 async function startICY(st) {
   stopICY();
   const ctrl = new AbortController();
@@ -1002,15 +1057,13 @@ async function startICY(st) {
       }
     }
   } catch (e) {
-    if (e.name !== "AbortError" && current && current.url === st.url && !npText) {
-      // silent — metadata is best-effort in browser mode
-    }
+    // silent — metadata is best-effort in browser mode
   }
 }
 
 /* ---------- search modal ---------- */
 const backdrop = $("modal-backdrop");
-let targetGroup = null;   // which column "Find stations" is adding to
+let targetGroup = null;
 
 function openModal(withUrlRow, group) {
   targetGroup = group || groupsOrder[0] || DEFAULT_GROUP;
@@ -1067,14 +1120,17 @@ function renderResults(list) {
         tagline: [st.country, (st.tags || "").split(",")[0]].filter(Boolean).join(" · "),
         group: targetGroup || DEFAULT_GROUP
       };
-      if (!favorites.some(f => f.url === station.url)) {
+      const existing = favorites.find(f => f.name === station.name && f.group === station.group);
+      if (existing) {
+        existing.url = station.url;      // refresh the URL if it changed
+      } else {
         favorites.unshift(station);
         if (!groupsOrder.includes(station.group)) groupsOrder.push(station.group);
-        store.save();
-        renderBoard();
       }
+      store.save();
+      renderBoard();
       closeModal();
-      playStation(station);
+      playStation(existing || station);
     });
     el.appendChild(row);
   });
